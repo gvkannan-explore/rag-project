@@ -1,0 +1,29 @@
+[project]
+name = "rag-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "gvkannan-explore", email = "gvkanna.work@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "tqdm>=4.70.1",
+]
+
+[project.scripts]
+rag-project = "rag_project:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+vector-store = [
+    "numpy>=2.5.3",
+    "openai>=3.26.0",
+    "pgvector>=0.5.0",
+    "psycopg-binary>=3.3.6",
+    "rank-bm25>=0.2.2",
+    "tiktoken>=0.14.0",
+]
