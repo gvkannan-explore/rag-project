@@ -5,7 +5,7 @@
 export UV_PROJECT_ENVIRONMENT=.data
 
 printf '\nRunning Ruff\n'
-uv run ruff check
+uv run ruff format --check
 
 printf '\nRunning Pyright\n'
 uv run pyright
