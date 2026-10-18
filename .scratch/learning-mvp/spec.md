@@ -9,7 +9,7 @@ The user approved the twelve-ticket breakdown and supplied existing corpus and e
 - Frozen corpus: `data/corpus_Oct2026.jsonl` (exists).
 - Embeddings: `data/vectors/vector_embeddings.npz` (exists). The user referred to `vector_embedding.npz`; this is the archive found locally.
 - Manifest: `data/vectors/vector_embeddings.manifest.json` (exists), reporting 5,000 PMIDs and corpus hash `5e39d0131a0b0891ae2be0080a44b3c4d8b91cd5dfab9039143cdaed3c0dc9ec`.
-- Archive contents and correspondence to the corpus have not been verified by executing Python.
+- Ticket 02 records archive verification and database integration evidence. Consult its latest dated comment for current verification status.
 
 The manifest count exceeds the source spec's 200–500-paper limit. Resolve this explicitly in ticket 01: either select and record an MVP-sized view of the frozen corpus and reuse matching cached vectors, or obtain an explicit scope amendment for all 5,000 papers. Preserve the original artifacts. No scope amendment is assumed.
 

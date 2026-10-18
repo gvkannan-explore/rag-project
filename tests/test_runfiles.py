@@ -20,15 +20,28 @@ def chosen_environment(tmp_path: Path) -> Path:
     return environment
 
 
+@pytest.mark.parametrize(
+    "mode,operation",
+    [
+        ("bm25", "BM25 retrieval"),
+        ("index", "Cached-vector indexing"),
+        ("dense", "Cached-vector indexing"),
+    ],
+)
 def test_search_runfile_uses_chosen_environment_and_preserves_failure(
     chosen_environment: Path,
+    mode: str,
+    operation: str,
 ) -> None:
     result = subprocess.run(
-        ["bash", "runs/run_search.sh", "bm25", "question"],
+        ["bash", "runs/run_search.sh", mode, "question"],
         env={
             **os.environ,
             "RAG_ENV_DIR": str(chosen_environment),
             "RAG_NONINTERACTIVE": "1",
+            "ALLOW_PAID_QUERY": "1",
+            "QUERY_BUDGET_USD": "0.001",
+            "OPENAI_API_KEY": "test",
         },
         capture_output=True,
         check=False,
@@ -37,7 +50,7 @@ def test_search_runfile_uses_chosen_environment_and_preserves_failure(
     )
     assert result.returncode == 7
     assert "fixture failure" in result.stderr
-    assert "BM25 retrieval" in result.stderr
+    assert operation in result.stderr
     assert "7" in result.stderr
 
 

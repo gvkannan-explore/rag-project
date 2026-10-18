@@ -81,3 +81,23 @@ token IDs so the estimate and request refer to the same input.
 
 No paid model call was made while implementing these checks. This project is
 a research demonstration and has no clinical use.
+
+## Verification record
+
+On 2026-10-18, the implementation at `8037079` plus its working review fixes
+passed the following checks. The tree was dirty during verification.
+
+- `RAG_NONINTERACTIVE=1 bash runs/perform_ci.sh "$PWD/.data"` passed 44 offline
+  tests, Ruff lint and formatting, Pyright, shell syntax and runfile rules,
+  secret scans, and hook regression checks.
+- The database integration command above with `RAG_TEST_RESTART=1` passed
+  both tests. The restart check verified a changed Postgres startup timestamp
+  before comparing retrieval results.
+- `.data/bin/rag index` validated and indexed 200 cached vectors. After the
+  restart, SQL confirmed 200 rows with distinct chunk IDs and PMIDs for the
+  selected corpus and model.
+- Both review axes accepted the final changes. The spec review's restart
+  verification finding was fixed and rechecked. ShellCheck was unavailable.
+
+These results do not establish live question-embedding behavior. A paid trial
+and its user-agreed spending ceiling remain pending.

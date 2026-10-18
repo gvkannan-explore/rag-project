@@ -161,6 +161,9 @@ def test_vectors_survive_database_restart(vector_store: str) -> None:
     import psycopg
 
     before = retrieve(vector_store, 50)
+    with psycopg.connect(vector_store) as conn:
+        started_before = conn.execute("SELECT pg_postmaster_start_time()").fetchone()
+    assert started_before is not None
     subprocess.run(
         ["docker", "compose", "restart", "db"],
         check=True,
@@ -170,10 +173,15 @@ def test_vectors_survive_database_restart(vector_store: str) -> None:
     deadline = time.monotonic() + 30
     while True:
         try:
-            with psycopg.connect(vector_store, connect_timeout=2):
+            with psycopg.connect(vector_store, connect_timeout=2) as conn:
+                started_after = conn.execute(
+                    "SELECT pg_postmaster_start_time()"
+                ).fetchone()
                 break
         except psycopg.OperationalError:
             if time.monotonic() >= deadline:
                 raise
             time.sleep(0.2)
+    assert started_after is not None
+    assert started_after[0] != started_before[0], "The queried database did not restart"
     assert retrieve(vector_store, 50) == before

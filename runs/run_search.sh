@@ -37,9 +37,11 @@ case "$mode" in
             echo 'Set QUERY_BUDGET_USD to the agreed spending ceiling for this query.' >&2
             exit 2
         fi
-        if ! run_step 'Cached-vector indexing' "$rag" index; then
+        run_step 'Cached-vector indexing' "$rag" index
+        status=$?
+        if [[ "$status" -ne 0 ]]; then
             echo "Indexing failed. Check that Postgres is running and try again." >&2
-            exit 1
+            exit "$status"
         fi
         run_step 'Dense retrieval' "$rag" search "$query" --method dense --limit 10 \
             --allow-paid-query --query-budget-usd "$QUERY_BUDGET_USD"
