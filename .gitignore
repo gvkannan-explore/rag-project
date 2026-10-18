@@ -229,3 +229,5 @@ data/*
 !.env.example
 data/corpus.jsonl
 data/corpus.jsonl
+.scratch/learning-mvp/issues/*
+.gitleaksignore

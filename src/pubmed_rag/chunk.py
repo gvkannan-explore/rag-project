@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -6,12 +8,29 @@ import os
 import tempfile
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import IO, Any, cast
+from typing import IO, TYPE_CHECKING, Any, cast
 
-import numpy as np
-import tiktoken
-from openai import OpenAI
-from tqdm import tqdm
+if TYPE_CHECKING:
+    from openai import OpenAI as OpenAIType
+
+
+class _TiktokenProxy:
+    @staticmethod
+    def encoding_for_model(model: str) -> Any:
+        import tiktoken
+
+        return tiktoken.encoding_for_model(model)
+
+
+tiktoken = _TiktokenProxy()
+
+
+class OpenAI:
+    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+        from openai import OpenAI as OpenAIClient
+
+        return OpenAIClient(*args, **kwargs)
+
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +79,7 @@ def load_chunks(
     corpus_path: Path,
     limit_abstracts: int = LIMIT_ABSTRACTS,
     selected_pmids: list[str] | None = None,
+    rejections: list[dict[str, str]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield valid, unique records; a limit of -1 reads the entire corpus."""
     if limit_abstracts != -1 and limit_abstracts <= 0:
@@ -89,6 +109,8 @@ def load_chunks(
                     raise ValueError(f"missing or blank title for PMID {pmid}")
             except (TypeError, ValueError) as exc:
                 logger.warning("Rejected line %s: %s", line_number, exc)
+                if rejections is not None:
+                    rejections.append({"line": str(line_number), "reason": str(exc)})
                 continue
             seen.add(pmid)
             yield {
@@ -159,12 +181,15 @@ def atomic_save(path: Path, write: Callable[[IO[bytes]], object]) -> None:
 
 def save_embeddings(
     chunks: list[dict[str, Any]],
-    oai_client: OpenAI,
+    oai_client: OpenAIType,
     save_embed: Path,
     batch_size: int = BATCH_SIZE,
     embed_model: str = EMBED_MODEL,
     embed_dim: int = EMBED_DIM,
 ) -> None:
+    import numpy as np
+    from tqdm import tqdm
+
     ## Check input validation
     if batch_size <= 0 or embed_dim <= 0:
         raise ValueError("batch_size and embed_dim must be greater than zero")
