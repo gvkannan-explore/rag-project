@@ -34,3 +34,6 @@ Use the five default triage roles as local issue statuses. See `docs/agents/tria
 ### Domain docs
 
 Use a single-context layout: root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
+
+## General Rules:
+* Follow Chesteron's Fence Law: "Don't delete the fence until you know and verify why it's there.
