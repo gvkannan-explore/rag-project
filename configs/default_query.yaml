@@ -1,0 +1,6 @@
+db: pubmed
+retmax: 5000
+retmode: json
+sort: pub_date
+term: '"breast neoplasms"[mh] AND 2019:2026[dp] AND english[la] AND hasabstract NOT
+  "retracted publication"[pt]'

@@ -8,6 +8,9 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "httpx>=0.28.1",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
     "tqdm>=4.70.1",
 ]
 
@@ -23,7 +26,6 @@ dev = [
     "ruff>=0.17.1",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
-    "ruff>=0.17.1",
 ]
 vector-store = [
     "numpy>=2.5.3",
