@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-export UV_PROJECT_ENVIRONMENT=.data
-export DATA_DIR="data/"
-export CONFIG_DIR="configs/default_query.yaml"
-
-printf "Running Data ingestion from NCBI\n"
-time uv run python -m pubmed_rag.ingest \
-    --save_dir "$DATA_DIR" \
-    --query_config "$CONFIG_DIR" \
+source "$(dirname "${BASH_SOURCE[0]}")/../scripts/runfile-common.sh" || exit 1
+use_environment || exit 1
+run_step 'PubMed ingestion' "$env_dir/bin/python" -m pubmed_rag.ingest \
+    --save_dir data/ \
+    --query_config configs/default_query.yaml \
     --timeout 60
+exit "$?"

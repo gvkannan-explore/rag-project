@@ -27,6 +27,11 @@ def main() -> None:
         help="Allow one paid question embedding request for dense search",
     )
     search_parser.add_argument("--limit", type=int, default=5)
+    search_parser.add_argument(
+        "--query-budget-usd",
+        type=float,
+        help="Maximum estimated USD for this one-request dense query; required with --allow-paid-query",
+    )
     search_parser.add_argument("--corpus", default="data/corpus_Oct2026.jsonl")
     search_parser.add_argument("--selection", default="config/mvp_corpus.json")
     search_parser.add_argument(
@@ -37,4 +42,7 @@ def main() -> None:
         default="postgresql://rag:rag_project@localhost:5432/pubmed_rag",
     )
     args = parser.parse_args()
-    search_main(args)
+    try:
+        search_main(args)
+    except (ValueError, FileNotFoundError) as exc:
+        parser.error(str(exc))

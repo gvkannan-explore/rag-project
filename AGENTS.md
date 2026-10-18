@@ -14,6 +14,11 @@
 
 ## Agent skills
 
+### Learning and review workflow
+
+- Before implementation, tutoring, or review, read the working agreement in
+  `.scratch/learning-mvp/spec.md` and the workflow in `docs/agents/workflow.md`.
+
 ### Shell runfiles
 
 - Keep interactive terminals open after runfiles complete. Use `set -u -o pipefail` with explicit failure handling; never use `set -e` in a runfile.

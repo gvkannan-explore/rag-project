@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import math
 import re
+import sys
 from collections import Counter
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, TypedDict, cast
 
@@ -14,6 +16,8 @@ from pubmed_rag.chunk import load_chunks, subset_manifest
 TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 SELECTION_SIZE = 200
 MODEL_ID = "text-embedding-3-small_1536"
+# Standard input price, checked against the official model page on 2026-10-18.
+QUERY_USD_PER_MILLION_TOKENS = Decimal("0.02")
 
 
 class RetrievalResult(TypedDict):
@@ -92,33 +96,19 @@ def bm25_search(
 ) -> list[RetrievalResult]:
     if limit <= 0:
         raise ValueError("limit must be greater than zero")
+    if not chunks:
+        return []
+    from rank_bm25 import BM25Okapi  # pyright: ignore[reportMissingTypeStubs]
+
     tokenized: list[list[str]] = [tokenize(c["chunk_text"]) for c in chunks]
-    lengths = [len(tokens) for tokens in tokenized]
-    average_length = sum(lengths) / len(lengths) if lengths else 0.0
-    doc_freq: Counter[str] = Counter()
-    frequencies: list[Counter[str]] = [Counter(tokens) for tokens in tokenized]
-    for counts in frequencies:
-        doc_freq.update(counts.keys())
-    count = len(chunks)
-    k1, b = 1.5, 0.75
-    query_tokens = tokenize(query)
-    scores: list[float] = []
-    for length, counts in zip(lengths, frequencies, strict=True):
-        score = 0.0
-        for token in query_tokens:
-            frequency = counts[token]
-            if not frequency:
-                continue
-            inverse_frequency = math.log1p(
-                (count - doc_freq[token] + 0.5) / (doc_freq[token] + 0.5)
-            )
-            normalization = (
-                k1 * (1 - b + b * length / average_length) if average_length else k1
-            )
-            score += (
-                inverse_frequency * frequency * (k1 + 1) / (frequency + normalization)
-            )
-        scores.append(score)
+    scores: list[float] = (
+        [
+            float(score)
+            for score in cast(Any, BM25Okapi)(tokenized).get_scores(tokenize(query))
+        ]
+        if any(tokenized)
+        else [0.0] * len(chunks)
+    )
     ranked = sorted(
         range(len(chunks)), key=lambda i: (-float(scores[i]), chunks[i]["id"])
     )
@@ -258,6 +248,8 @@ def dense_search(
     database_url: str,
     corpus_hash: str,
     allow_paid_query: bool,
+    query_budget_usd: float | None = None,
+    expected_count: int | None = None,
 ) -> list[RetrievalResult]:
     """Embed one query and ask Postgres for exact cosine nearest neighbors."""
     if limit <= 0:
@@ -267,24 +259,62 @@ def dense_search(
             "Dense search makes one paid question embedding request; "
             "pass --allow-paid-query to run this single-request trial"
         )
+    if (
+        query_budget_usd is None
+        or not math.isfinite(query_budget_usd)
+        or query_budget_usd <= 0
+    ):
+        raise ValueError("A finite positive --query-budget-usd budget is required")
+    if not query.strip():
+        raise ValueError("Question must not be blank")
+    import tiktoken
+
+    input_ids = tiktoken.encoding_for_model("text-embedding-3-small").encode(
+        query, disallowed_special=()
+    )
+    if len(input_ids) > 8191:
+        raise ValueError("Question exceeds the 8191-token trial limit")
+    estimated_cost = Decimal(len(input_ids)) * QUERY_USD_PER_MILLION_TOKENS / 1_000_000
+    if estimated_cost > Decimal(str(query_budget_usd)):
+        raise ValueError(
+            f"Estimated question cost ${estimated_cost} exceeds the budget"
+        )
     import psycopg  # pyright: ignore[reportMissingImports]
     from openai import OpenAI
     from pgvector.psycopg import register_vector  # pyright: ignore[reportUnknownVariableType]
 
     psycopg_any = cast(Any, psycopg)
     register_vector = cast(Any, register_vector)
-    response = OpenAI().embeddings.create(
-        model="text-embedding-3-small", input=query, dimensions=1536
-    )
-    if response.model != "text-embedding-3-small" or len(response.data) != 1:
-        raise ValueError("Embedding response model or item count did not match request")
     import numpy as np
 
-    vector = np.asarray(response.data[0].embedding, dtype=np.float32)
-    if vector.shape != (1536,) or not np.isfinite(vector).all():
-        raise ValueError("Question embedding has invalid dimensions or values")
     with psycopg_any.connect(database_url) as conn:
         register_vector(conn)
+        count = conn.execute(
+            "SELECT count(*) FROM paper_chunks WHERE corpus_hash = %s AND model_id = %s",
+            (corpus_hash, MODEL_ID),
+        ).fetchone()[0]
+        if count == 0 or (expected_count is not None and count != expected_count):
+            raise ValueError(
+                "Selected corpus index is missing or incomplete; run rag index"
+            )
+        print(
+            f"Question tokens={len(input_ids)} estimated_cost_usd={estimated_cost}",
+            file=sys.stderr,
+        )
+        response = OpenAI(max_retries=0).embeddings.create(
+            model="text-embedding-3-small", input=input_ids, dimensions=1536
+        )
+        if response.model != "text-embedding-3-small" or len(response.data) != 1:
+            raise ValueError(
+                "Embedding response model or item count did not match request"
+            )
+        vector = np.asarray(response.data[0].embedding, dtype=np.float32)
+        if (
+            vector.shape != (1536,)
+            or not np.isfinite(vector).all()
+            or np.linalg.norm(vector) == 0
+        ):
+            raise ValueError("Question embedding has invalid dimensions or values")
         rows: list[tuple[Any, ...]] = conn.execute(
             """SELECT pmid, title, source_text, corpus_hash, model_id,
             1 - (embedding <=> %s) AS score FROM paper_chunks
@@ -329,6 +359,8 @@ def main(args: Any) -> None:
             args.database_url,
             selection["hash"],
             args.allow_paid_query,
+            query_budget_usd=args.query_budget_usd,
+            expected_count=selection["count"],
         )
     )
     for result in results:

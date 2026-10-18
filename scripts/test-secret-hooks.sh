@@ -5,7 +5,8 @@ repo_root=$(git rev-parse --show-toplevel)
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
 fixture="$tmp_dir/repo"
-mkdir -p "$fixture/scripts" "$fixture/.githooks" "$fixture/.tools/bin"
+mkdir -p "$fixture/scripts" "$fixture/.githooks" "$fixture/.tools/bin" "$fixture/runs"
+printf '#!/usr/bin/env bash\nexit "${FAKE_CI_STATUS:-0}"\n' > "$fixture/runs/perform_ci.sh"
 cp "$repo_root/scripts/check-secrets.sh" "$fixture/scripts/"
 cp "$repo_root/.githooks/pre-commit" "$repo_root/.githooks/pre-push" "$fixture/.githooks/"
 ln -s "$repo_root/.tools/bin/gitleaks" "$fixture/.tools/bin/gitleaks"
@@ -33,6 +34,16 @@ git -c core.hooksPath=/dev/null commit --quiet -m 'Synthetic secret fixture'
 secret_oid=$(git rev-parse HEAD)
 if printf 'refs/heads/main %s refs/heads/main %s\n' "$secret_oid" "$clean_oid" | bash .githooks/pre-push > "$tmp_dir/scan.log" 2>&1; then
     echo 'FAIL: pre-push accepted a synthetic secret' >&2
+    exit 1
+fi
+if printf 'refs/heads/secret %s refs/heads/secret %s\nrefs/heads/clean %s refs/heads/clean %s\n' \
+    "$secret_oid" "$zero_oid" "$clean_oid" "$zero_oid" | bash .githooks/pre-push > "$tmp_dir/multi.log" 2>&1; then
+    echo 'FAIL: a later clean ref masked an earlier secret scan failure' >&2
+    exit 1
+fi
+if printf 'refs/heads/clean %s refs/heads/clean %s\n' "$clean_oid" "$zero_oid" | \
+    FAKE_CI_STATUS=7 bash .githooks/pre-push > "$tmp_dir/ci.log" 2>&1; then
+    echo 'FAIL: pre-push ignored a failed local check suite' >&2
     exit 1
 fi
 if ! grep -q REDACTED "$tmp_dir/scan.log"; then

@@ -26,6 +26,7 @@ class FakeConnection:
         self.indexed: dict[str, tuple[object, ...]] = {}
         self.query_rows = list(query_rows or [])
         self.statements: list[str] = []
+        self.ready_count = 2
 
     def __enter__(self) -> Self:
         return self
@@ -42,6 +43,9 @@ class FakeConnection:
 
     def fetchall(self) -> list[tuple[object, ...]]:
         return self.query_rows
+
+    def fetchone(self) -> tuple[int]:
+        return (self.ready_count,)
 
 
 class FakeCursor:
@@ -110,6 +114,42 @@ def test_selection_reuse_fails_when_paper_text_changes(tmp_path: Path) -> None:
     corpus.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     with pytest.raises(ValueError, match="selection changed"):
         load_selection(selection_path, corpus)
+
+
+def test_bm25_uses_okapi_scores_and_returns_shared_results() -> None:
+    chunks = [
+        {
+            "id": str(i),
+            "title": f"Paper {i}",
+            "chunk_text": text,
+            "meta": {"hash": "selected"},
+        }
+        for i, text in enumerate(
+            [
+                "brca1 mutation",
+                "brca1 mutation",
+                "her2 expression",
+                "egfr study",
+                "tp53 study",
+            ],
+            start=1,
+        )
+    ]
+    results = bm25_search(chunks, "BRCA1", 10)
+    assert [result["pmid"] for result in results] == ["1", "2", "3", "4", "5"]
+    assert [result["score"] for result in results] == pytest.approx(
+        [0.3364722366212129, 0.3364722366212129, 0, 0, 0]
+    )
+    assert results[0] == {
+        "pmid": "1",
+        "title": "Paper 1",
+        "source_text": "brca1 mutation",
+        "corpus_hash": "selected",
+        "method": "bm25",
+        "model_id": None,
+        "score": pytest.approx(0.3364722366212129),
+        "rank": 1,
+    }
 
 
 def test_selection_reuse_fails_when_member_missing(tmp_path: Path) -> None:
@@ -246,12 +286,83 @@ def test_dense_query_uses_cosine_order_and_selected_corpus(
         )
     )
     monkeypatch.setattr(
-        openai, "OpenAI", lambda: SimpleNamespace(embeddings=embeddings)
+        openai, "OpenAI", lambda **kwargs: SimpleNamespace(embeddings=embeddings)
     )
 
-    results = dense_search("question", 10, "postgresql://fake", "selected", True)
+    results = dense_search(
+        "question",
+        10,
+        "postgresql://fake",
+        "selected",
+        True,
+        query_budget_usd=0.001,
+        expected_count=2,
+    )
 
     assert [row["pmid"] for row in results] == ["1", "2"]
     sql = " ".join(conn.statements)
     assert "embedding <=> %s" in sql
     assert "WHERE corpus_hash = %s AND model_id = %s" in sql
+
+
+@pytest.mark.parametrize("budget", [None, 0.0, -1.0, float("inf"), float("nan")])
+def test_dense_search_requires_a_finite_positive_budget_before_paid_calls(
+    monkeypatch: pytest.MonkeyPatch, budget: float | None
+) -> None:
+    import openai
+
+    def reject_paid_client(**kwargs: Any) -> None:
+        pytest.fail("A rejected budget must not create a paid client")
+
+    monkeypatch.setattr(openai, "OpenAI", reject_paid_client)
+    with pytest.raises(ValueError, match="budget"):
+        dense_search(
+            "question",
+            5,
+            "postgresql://fake",
+            "selected",
+            True,
+            query_budget_usd=budget,
+        )
+
+
+@pytest.mark.parametrize("ready_count", [0, 1])
+def test_dense_search_rejects_incomplete_index_without_paid_calls(
+    monkeypatch: pytest.MonkeyPatch, ready_count: int
+) -> None:
+    conn = FakeConnection()
+    conn.ready_count = ready_count
+    install_fake_postgres(monkeypatch, conn)
+    import openai
+
+    def reject_paid_client(**kwargs: Any) -> None:
+        pytest.fail("An incomplete index must not create a paid client")
+
+    monkeypatch.setattr(openai, "OpenAI", reject_paid_client)
+    with pytest.raises(ValueError, match="index"):
+        dense_search(
+            "question",
+            5,
+            "postgresql://fake",
+            "selected",
+            True,
+            query_budget_usd=0.001,
+            expected_count=2,
+        )
+
+
+@pytest.mark.parametrize("query,budget", [("question", 1e-12), ("   ", 0.001)])
+def test_dense_search_rejects_unusable_query_without_paid_calls(
+    monkeypatch: pytest.MonkeyPatch, query: str, budget: float
+) -> None:
+    install_fake_postgres(monkeypatch, FakeConnection())
+    import openai
+
+    def reject_paid_client(**kwargs: Any) -> None:
+        pytest.fail("An unusable or over-budget query must not create a paid client")
+
+    monkeypatch.setattr(openai, "OpenAI", reject_paid_client)
+    with pytest.raises(ValueError, match="budget|blank"):
+        dense_search(
+            query, 5, "postgresql://fake", "selected", True, query_budget_usd=budget
+        )

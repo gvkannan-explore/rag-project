@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if ! cd "$repo_root"; then
-    echo "Could not enter project directory: $repo_root" >&2
-    exit 1
-fi
-
-rag="$repo_root/.data/bin/rag"
+source "$(dirname "${BASH_SOURCE[0]}")/../scripts/runfile-common.sh" || exit 1
+use_environment || exit 1
+rag="$env_dir/bin/rag"
 if [[ ! -x "$rag" ]]; then
-    echo "Existing .data environment not found. Use the project's configured Python environment first." >&2
+    echo "rag command not found in the chosen environment: $env_dir" >&2
     exit 1
 fi
 
@@ -21,11 +17,11 @@ query="${*:-HER2 breast cancer treatment}"
 
 case "$mode" in
     bm25)
-        "$rag" search "$query" --method bm25 --limit 5
+        run_step 'BM25 retrieval' "$rag" search "$query" --method bm25 --limit 5
         exit "$?"
         ;;
     index)
-        "$rag" index
+        run_step 'Cached-vector indexing' "$rag" index
         exit "$?"
         ;;
     dense)
@@ -37,11 +33,16 @@ case "$mode" in
             echo "Set OPENAI_API_KEY before dense search." >&2
             exit 2
         fi
-        if ! "$rag" index; then
+        if [[ -z "${QUERY_BUDGET_USD:-}" ]]; then
+            echo 'Set QUERY_BUDGET_USD to the agreed spending ceiling for this query.' >&2
+            exit 2
+        fi
+        if ! run_step 'Cached-vector indexing' "$rag" index; then
             echo "Indexing failed. Check that Postgres is running and try again." >&2
             exit 1
         fi
-        "$rag" search "$query" --method dense --limit 10 --allow-paid-query
+        run_step 'Dense retrieval' "$rag" search "$query" --method dense --limit 10 \
+            --allow-paid-query --query-budget-usd "$QUERY_BUDGET_USD"
         exit "$?"
         ;;
     *)

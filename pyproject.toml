@@ -10,6 +10,7 @@ requires-python = ">=3.14"
 dependencies = [
     "httpx>=0.28.1",
     "pyyaml>=6.0.3",
+    "rank-bm25>=0.2.2",
     "rich>=15.0.0",
     "tqdm>=4.70.1",
 ]
@@ -49,3 +50,4 @@ pythonpath = [
   "."
 ]
 testpaths = ["tests"]
+markers = ["integration: opt-in checks against a real Postgres database"]
