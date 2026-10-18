@@ -228,3 +228,4 @@ data/*
 .env.*
 !.env.example
 data/corpus.jsonl
+data/corpus.jsonl
