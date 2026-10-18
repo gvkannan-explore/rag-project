@@ -28,6 +28,10 @@ dev = [
     "pyright>=1.1.414",
     "pytest>=9.1.1",
 ]
+reranking = [
+    "sentence-transformers>=5.7,<6",
+    "transformers>=5.20.1,<6",
+]
 vector-store = [
     "numpy>=2.5.3",
     "openai>=3.26.0",

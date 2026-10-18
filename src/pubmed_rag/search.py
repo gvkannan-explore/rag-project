@@ -7,9 +7,10 @@ import math
 import re
 import sys
 from collections import Counter
+from dataclasses import asdict
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from pubmed_rag.chunk import load_chunks, subset_manifest
 
@@ -20,15 +21,25 @@ MODEL_ID = "text-embedding-3-small_1536"
 QUERY_USD_PER_MILLION_TOKENS = Decimal("0.02")
 
 
+class SourceScore(TypedDict):
+    rank: int
+    score: float
+    model_id: str | None
+
+
 class RetrievalResult(TypedDict):
     pmid: str
     title: str
     source_text: str
     corpus_hash: str
     model_id: str | None
-    method: Literal["bm25", "dense"]
+    method: Literal["bm25", "dense", "hybrid", "reranked"]
     score: float
     rank: int
+    sources: NotRequired[dict[str, SourceScore]]
+    fused_score: NotRequired[float]
+    fused_rank: NotRequired[int]
+    reranker_score: NotRequired[float]
 
 
 def _unique_strings(value: Any) -> list[str] | None:
@@ -242,18 +253,12 @@ def index_vectors(
     return len(vectors)
 
 
-def dense_search(
+def validate_paid_query(
     query: str,
-    limit: int,
-    database_url: str,
-    corpus_hash: str,
     allow_paid_query: bool,
-    query_budget_usd: float | None = None,
-    expected_count: int | None = None,
-) -> list[RetrievalResult]:
-    """Embed one query and ask Postgres for exact cosine nearest neighbors."""
-    if limit <= 0:
-        raise ValueError("limit must be greater than zero")
+    query_budget_usd: float | None,
+) -> tuple[list[int], Decimal]:
+    """Check consent and the token budget without making a paid request."""
     if not allow_paid_query:
         raise ValueError(
             "Dense search makes one paid question embedding request; "
@@ -279,6 +284,24 @@ def dense_search(
         raise ValueError(
             f"Estimated question cost ${estimated_cost} exceeds the budget"
         )
+    return input_ids, estimated_cost
+
+
+def dense_search(
+    query: str,
+    limit: int,
+    database_url: str,
+    corpus_hash: str,
+    allow_paid_query: bool,
+    query_budget_usd: float | None = None,
+    expected_count: int | None = None,
+) -> list[RetrievalResult]:
+    """Embed one query and ask Postgres for exact cosine nearest neighbors."""
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    input_ids, estimated_cost = validate_paid_query(
+        query, allow_paid_query, query_budget_usd
+    )
     import psycopg  # pyright: ignore[reportMissingImports]
     from openai import OpenAI
     from pgvector.psycopg import register_vector  # pyright: ignore[reportUnknownVariableType]
@@ -350,20 +373,43 @@ def main(args: Any) -> None:
         count = index_vectors(chunks, selection, Path(args.archive), args.database_url)
         print(f"Indexed {count} cached vectors for corpus {selection['hash']}")
         return
-    results = (
-        bm25_search(chunks, args.query, args.limit)
-        if args.method == "bm25"
-        else dense_search(
-            args.query,
-            args.limit,
-            args.database_url,
-            selection["hash"],
-            args.allow_paid_query,
-            query_budget_usd=args.query_budget_usd,
-            expected_count=selection["count"],
-        )
+    from pubmed_rag.retrieval import retrieve
+
+    run = retrieve(
+        args.query,
+        args.method,
+        chunks,
+        selection,
+        args.database_url,
+        args.allow_paid_query,
+        query_budget_usd=args.query_budget_usd,
+        depth=args.limit,
     )
-    for result in results:
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "configuration": run.configuration,
+                    "results": run.results[: args.limit],
+                    "context_pmids": [row["pmid"] for row in run.context],
+                    "reranking": asdict(run.reranking) if run.reranking else None,
+                },
+                allow_nan=False,
+            )
+        )
+        return
+    if run.reranking is not None:
+        print(
+            f"Reranking: {json.dumps(asdict(run.reranking), sort_keys=True)}",
+            file=sys.stderr,
+        )
+    for result in run.results[: args.limit]:
         print(f"{result['rank']}. {result['title']} (PMID {result['pmid']})")
         print(f"   score={result['score']:.6f} {provenance(result)}")
+        if "reranker_score" in result:
+            print(
+                f"   reranker_score={result['reranker_score']:.6f} fused_rank={result.get('fused_rank')}"
+            )
+        if "sources" in result:
+            print(f"   sources={json.dumps(result['sources'], sort_keys=True)}")
         print(f"   {result['source_text'].replace(chr(10), ' ')[:240]}")

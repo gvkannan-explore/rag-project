@@ -12,7 +12,7 @@ experiments and are outside this change.
 After choosing `.data/`, install the declared dependencies into it:
 
 ```sh
-UV_PROJECT_ENVIRONMENT="$PWD/.data" uv sync --inexact --group dev --group vector-store
+UV_PROJECT_ENVIRONMENT="$PWD/.data" uv sync --inexact --group dev --group vector-store --group reranking
 bash runs/perform_ci.sh "$PWD/.data"
 ```
 
@@ -81,6 +81,82 @@ token IDs so the estimate and request refer to the same input.
 
 No paid model call was made while implementing these checks. This project is
 a research demonstration and has no clinical use.
+
+## Hybrid retrieval and reranking
+
+`rag search --method` accepts `A` or `dense`, `B` or `bm25`, `C` or `hybrid`,
+and `D` or `reranked`. A, C, and D require the existing paid-query opt-in and
+per-command budget. B makes no model calls. For example:
+
+```sh
+.data/bin/rag search "HER2 treatment" --method B --limit 20 --json
+.data/bin/rag search "HER2 treatment" --method C --limit 20 --json \
+  --allow-paid-query --query-budget-usd 0.001
+.data/bin/rag search "HER2 treatment" --method D --limit 20 --json \
+  --allow-paid-query --query-budget-usd 0.001
+```
+
+Use the paid examples only after agreeing on the spending ceiling. Separate
+C and D commands each make their own question-embedding request. The examples
+do not authorize paid calls. The future evaluation runner must account for
+all requests and reuse only correctly identified cached inputs.
+
+C and D retrieve 50 papers per source, fuse their union by PMID with
+`1 / (60 + source_rank)`, then retain the best 50 fused candidates. Source
+ranks start at one. A paper contributes once per source where it appears.
+Equal final scores sort by PMID as a string. Both configurations use the
+same candidate construction, regardless of the display limit.
+
+The Python `retrieve` entry point returns deep rankings in `run.results` and
+five papers in `run.context`. The CLI displays five by default. Use
+`--limit 20` for ticket 08 labeling pools or `--limit 50` for the entire C/D
+pool. C/D reject limits above 50. A/B allow deeper limits. JSON output
+contains the requested display depth and the ordered generation-context PMIDs.
+It includes source text, so save it only in ignored local storage.
+
+Each fused result preserves the source ranks, scores, and model IDs in
+`sources`. `fused_score` and `fused_rank` preserve the C ranking. D keeps
+`score` equal to the fused retrieval score, adds `reranker_score`, and assigns
+its final `rank` by descending reranker score. Failed model scoring or
+non-finite scores cause an error. There is no automatic fallback to C.
+
+D uses `cross-encoder/ms-marco-MiniLM-L6-v2`, pinned to revision
+`233902d25c440f23af6f7d6e94d2946bac0bee0a`, through Sentence Transformers.
+The [official model list](https://sbert.net/docs/cross_encoder/pretrained_models.html)
+and [CrossEncoder reference](https://sbert.net/docs/package_reference/cross_encoder/model.html)
+confirm the model ID and question-document scoring interface. The model runs
+on CPU with batches of 16 and raw logit scores. Each pair contains the question
+and the full title-plus-abstract chunk. The tokenizer limits the pair to 512
+tokens, including special tokens, with longest-first truncation on the right.
+Later abstract text can therefore fall outside the model input. Source text
+in the returned result remains unchanged.
+
+Model files stay under ignored `data/models/`. The first D invocation may
+download model weights. Loading includes imports, download/cache lookup,
+and model initialization. `rerank_seconds` covers pair construction, model
+prediction, score validation, and sorting. It excludes candidate retrieval
+and model loading. Metadata records these boundaries separately, together
+with the model revision, CPU device, batch size, and truncation settings.
+Weights load into memory with `disable_mmap=True`. The CPU trial found that
+mapped weights had unaligned storage and produced non-finite scores on this
+machine. In-memory loading preserved the values and returned finite scores.
+
+Run the CPU trial with synthetic text and no paid requests:
+
+```sh
+.data/bin/python runs/trial_reranker.py
+```
+
+It scores 50 candidates, checks candidate membership and a long input's
+512-token truncation, and saves metadata in ignored `data/reranker_trial.json`.
+This checks the model runtime, not retrieval quality or a paid end-to-end D run.
+
+On 2026-10-18, a cache-only CPU trial on macOS 26.3 arm64 with Python 3.14.3,
+Sentence Transformers 5.7.0, Transformers 5.20.1, and PyTorch 2.10.0 loaded the
+model in 4.67 seconds and reranked 50 synthetic candidates in 0.29 seconds.
+One 3,012-token pair truncated to 512 tokens. All candidate identities survived,
+all scores were finite, and the explicit Mars passage ranked first. These are
+single-trial observations, not latency percentiles or biomedical quality results.
 
 ## Verification record
 
