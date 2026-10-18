@@ -6,8 +6,8 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from pubmed_rag.chunk import atomic_save, load_chunks, save_embeddings, subset_manifest
 from pubmed_rag import chunk
+from pubmed_rag.chunk import atomic_save, load_chunks, save_embeddings, subset_manifest
 
 
 def write_corpus(path, records):
@@ -45,6 +45,14 @@ def test_unlimited_selection(tmp_path):
     corpus = tmp_path / "corpus.jsonl"
     write_corpus(corpus, [paper("1"), paper("2", " "), paper("1"), paper("3")])
     assert [record["id"] for record in load_chunks(corpus, -1)] == ["1", "3"]
+
+
+@pytest.mark.parametrize("record", [None, [], "invalid", 42])
+def test_non_object_records_are_rejected(tmp_path, caplog, record):
+    corpus = tmp_path / "corpus.jsonl"
+    write_corpus(corpus, [record, paper("1")])
+    assert [item["id"] for item in load_chunks(corpus, -1)] == ["1"]
+    assert "record must be a JSON object" in caplog.text
 
 
 @pytest.mark.parametrize("limit", [0, -2])

@@ -71,7 +71,7 @@ def load_chunks(
             try:
                 parsed = json.loads(line)
                 if not isinstance(parsed, dict):
-                    raise ValueError("record must be a JSON object")
+                    raise TypeError("record must be a JSON object")
                 record = cast(dict[str, object], parsed)
                 pmid = record.get("pmid")
                 if not isinstance(pmid, str) or not pmid.strip():
@@ -87,7 +87,7 @@ def load_chunks(
                 title = record.get("title")
                 if not isinstance(title, str) or not title.strip():
                     raise ValueError(f"missing or blank title for PMID {pmid}")
-            except ValueError as exc:
+            except (TypeError, ValueError) as exc:
                 logger.warning("Rejected line %s: %s", line_number, exc)
                 continue
             seen.add(pmid)
@@ -253,7 +253,10 @@ def save_embeddings(
             )
         checkpoint = existing + completed
         atomic_save(
-            save_embed, lambda fp: np.savez(fp, d=np.array(checkpoint, dtype=object))
+            save_embed,
+            lambda fp, checkpoint=checkpoint: np.savez(
+                fp, d=np.array(checkpoint, dtype=object)
+            ),
         )
         existing = checkpoint
 
